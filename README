@@ -1,0 +1,9 @@
+This directory contains the Williams Undergraduate File System (WUFS), 
+which is derived from the minix file system by Linus Torvalds.
+
+This code is distributed under the GPL.
+
+This file system is not suitable for any particular purpose.
+
+Complaints? Contact bailey@cs.williams.edu.
+

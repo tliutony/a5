@@ -1,0 +1,9 @@
+config WUFS_FS
+	tristate "Williams Unbuntu File System"
+	depends on BLOCK
+	help
+	  WUFS is a simplistic file system used with the Williams CS432 class.
+
+	  To compile this file system support as a module, choose M here: the
+	  module will be called wufs.
+
