@@ -1,7 +1,6 @@
 /*
- * Support for direct block references in the Williams Ultimate File System.
- * (Used in version 0 only.)
- * (c) 2011, 2015 duane a. bailey
+ * Support for indirect block references in the Williams Ultimate File System.
+ * (c) 2011, 2015 duane a. bailey, Reid Pryzant, Tony Liu
  */
 #include <linux/buffer_head.h>
 #include "wufs.h"
@@ -64,15 +63,38 @@ int wufs_get_blk(struct inode * inode, sector_t block, struct buffer_head *bh, i
   }
 
   bptr = bptrs(inode);
-  ptr = bptr+block;
+
+  //WUFS_INODE_BPTRS-1 is 7, index of the indirect ptr
+  if(block >= WUFS_INODE_BPTRS-1) {
+    ptr = bptr+WUFS_INODE_BPTRS-1;
+    block -= WUFS_INODE_BPTRS-1;
+  }
+  else {
+    ptr = bptr+block;
+    retrieve_direct(ptr, inode, create, bh);
+  }
+
+  /* 
+   * at this point, *ptr is non-zero
+   * assign a disk mapping associated with the file system and block number
+   */
+  map_bh(bh, inode->i_sb, *ptr);
+
+  return 0;
+}
+
+/**
+ * direct block retrieval (same as Duane's original code)
+ */
+void retrieve_direct(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh) {
   /* now, ensure there's a block reference at the end of the pointer */
  start:
   if (!*ptr) {
     int n; /* number of any new block */
-
+    
     /* if we're not allowed to create it, claim an I/O error */
     if (!create) return -EIO;
-
+    
     /* grab a new block */
     n = wufs_new_block(inode);
     /* not possible? must have run out of space! */
@@ -91,11 +113,11 @@ int wufs_get_blk(struct inode * inode, sector_t block, struct buffer_head *bh, i
       *ptr = n;
       /* done with critical path */
       write_unlock(&pointers_lock);
-
+      
       /* update time and flush changes to disk */
       inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
       mark_inode_dirty(inode);
-
+      
       /*
        * tell the buffer system this a new, valid block
        * (see <linux/include/linux/buffer_head.h>)
@@ -103,16 +125,27 @@ int wufs_get_blk(struct inode * inode, sector_t block, struct buffer_head *bh, i
       set_buffer_new(bh);
     }
   }
-
-  /* 
-   * at this point, *ptr is non-zero
-   * assign a disk mapping associated with the file system and block number
-   */
-  map_bh(bh, inode->i_sb, *ptr);
-
-  return 0;
 }
 
+/**
+ * indirect block retrieval oh boy
+ */
+void retrieve_indirect(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh) {
+ start:
+  if (!*ptr) {
+    int indirect_LBA; /* number of our new indirect block */
+    
+    /* if we're not allowed to create it, claim an I/O error */
+    if (!create) return -EIO;
+    
+    /* grab a new block */
+    indirect_LBA = wufs_new_block(inode);
+    /* not possible? must have run out of space! */
+    if (!indirect_LBA) return -ENOSPC;
+
+    //TODO: things to think about: buffer lock, when to modify the block ptr
+  }
+}
 /**
  * wufs_truncate: (module-wide utility function)
  * Set the file allocation to exactly match the size of the file.

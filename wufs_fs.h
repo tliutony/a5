@@ -1,6 +1,6 @@
 /*
  * Public declarations for WUFS data structures
- * (c) 2011, 2015 duane a. bailey
+ * (c) the Great Class of 2016, especially Tony Liu and Reid Pryzant
  *
  * General note:
  *   All WUFS on-disk struct field names have two letter (sb, in, de) prefixes.
@@ -15,7 +15,7 @@
  * <linux/magic.h> file.  You can get this information with a call to
  * statfs(2) with any file in the file system.
  */
-#define WUFS_MAGIC	0x0EEF  /* V0? idea: in v. 11, this becomes 0xBEEF */
+#define WUFS_MAGIC	0xBEEF  /* We are BEEF. Moo.*/
 
 /*
  * the WUFS_BLOCKSIZE should be a multiple of the BLOCK_SIZE found in fs.h
@@ -48,7 +48,8 @@ struct wufs_super_block {
   __u16 sb_inodes;		/* count of inodes */
   __u16 sb_imap_bcnt;		/* the size (in blocks) of the imap */
   __u16 sb_bmap_bcnt;		/* the size (in blocks) of the bmap */
-  __u16 sb_max_fsize;		/* the maximum file size */
+  __u32 sb_max_fsize;		/* the maximum file size. u32 to support >64k files */
+  //char *secret_message = "SSSH DON'T TELL DUANE ABOUT THIS VERY SECRET MESSAGE";
 };
 
 /*
@@ -57,14 +58,15 @@ struct wufs_super_block {
  * Notes:
  *   - size of nlinks is sufficient, but not necessary.
  *   - location of the u32 field arranged on u32 boundary to avoid padding
- *   - all pointers are direct
+ *   - all pointers are direct except for the last
  *   - time is taken to be last modification time
  */
 #define WUFS_LINK_MAX	        255
-#define WUFS_INODE_BPTRS 9
+#define WUFS_INODE_BPTRS 8 //to compensate for the u32 size
 #define WUFS_INODESIZE   32
 #define WUFS_INODES_PER_BLOCK (WUFS_BLOCKSIZE/WUFS_INODESIZE)
 #define WUFS_ROOT_INODE 1 /* asserted lba of root directory's inode */
+#define WUFS_SINGLE_INDIRECT_BPTRS (WUFS_BLOCKSIZE/2) //2 byte addresses, single indirect block
 
 struct wufs_inode {
   __u16 in_mode;		/* file mode */
@@ -72,7 +74,7 @@ struct wufs_inode {
   __u16 in_uid;			/* user id */
   __u16 in_gid;			/* group id */
   __u32 in_time;		/* file modification time */
-  __u16 in_size;		/* file size (bytes) */
+  __u32 in_size;		/* file size (bytes) */
   /* 14 bytes used so far...*/
   __u16 in_block[WUFS_INODE_BPTRS]; /* index of data blocks */
   /* block logically fills to WUFS_INODESIZE (see below) */
@@ -81,13 +83,12 @@ struct wufs_inode {
 /*
  * wufs_dir_entry:
  * Notes:
- *   - FIXME: name should be wufs_dirent...
  *   - the length of name is clearly too small
- *   - 14 character names will not be null terminated; you have been warned
+ *   - 30 character name will not be null terminated; you have been warned
  *   - the directory entry size should be a power of two
  */
-#define WUFS_NAMELEN 14
-#define WUFS_DIRENTSIZE	16
+#define WUFS_NAMELEN 30 // changed to 30
+#define WUFS_DIRENTSIZE	32
 #define WUFS_DIRENTS_PER_BLOCK (WUFS_BLOCKSIZE/WUFS_DIRENTSIZE)
 
 struct wufs_dirent {
