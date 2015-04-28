@@ -6,18 +6,19 @@
 all:
 	scp 16tl4@$(PANIC):linux/drivers/block/loop.ko ~/;
 	scp 16tl4@$(PANIC):linux/fs/wufs/wufs.ko ~/;
-	scp 16tl4@$(PANIC):linux/fs/wufs/dab-wufs.img ~/; #this can be ours soon
+	scp 16tl4@$(PANIC):linux/fs/wufs/cow.img ~/; #this can be ours soon
 
 	insmod loop.ko;
 	insmod wufs.ko;
 	dmesg | tail;
-	losetup /dev/loop0 dab-wufs.img;
+	losetup /dev/loop0 cow.img;
 	mount /dev/loop0 /mnt;
 
 clean:
 	umount /mnt
-	losetup -d /dev/loop0 
+	losetup -d /dev/loop0
+	rmmod wufs 
 	rmmod loop
 	rm loop.ko
 	rm wufs.ko
-	rm dab-wufs.img
+	rm cow.img

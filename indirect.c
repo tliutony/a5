@@ -18,11 +18,14 @@ int      wufs_get_blk(struct inode * inode, sector_t block,
 void     wufs_truncate(struct inode * inode);
 unsigned wufs_blocks(loff_t size, struct super_block *sb);
 
+
+
 /*
  * Local routines.
  */
 static inline               block_t *bptrs(struct inode *inode);
-
+static int retrieve_indirect(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh, sector_t block);
+static int retrieve_direct(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh);
 /*
  * Global variables
  */
@@ -49,7 +52,7 @@ static inline block_t *bptrs(struct inode *inode)
 
 /**
  * wufs_get_block: (module-wide utility function)
- * Get the buffer assoicated with a particular block.
+ * Get the buffer associated with a particular block.
  * If create=1, create the block if missing; otherwise return with error
  */
 int wufs_get_blk(struct inode * inode, sector_t block, struct buffer_head *bh, int create)
@@ -68,17 +71,13 @@ int wufs_get_blk(struct inode * inode, sector_t block, struct buffer_head *bh, i
   if(block >= WUFS_INODE_BPTRS-1) {
     ptr = bptr+WUFS_INODE_BPTRS-1;
     block -= WUFS_INODE_BPTRS-1;
+    return retrieve_indirect(ptr, inode, create, bh, block);
   }
   else {
     ptr = bptr+block;
-    retrieve_direct(ptr, inode, create, bh);
+    return retrieve_direct(ptr, inode, create, bh);
   }
 
-  /* 
-   * at this point, *ptr is non-zero
-   * assign a disk mapping associated with the file system and block number
-   */
-  map_bh(bh, inode->i_sb, *ptr);
 
   return 0;
 }
@@ -86,7 +85,7 @@ int wufs_get_blk(struct inode * inode, sector_t block, struct buffer_head *bh, i
 /**
  * direct block retrieval (same as Duane's original code)
  */
-void retrieve_direct(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh) {
+int retrieve_direct(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh) {
   /* now, ensure there's a block reference at the end of the pointer */
  start:
   if (!*ptr) {
@@ -125,13 +124,25 @@ void retrieve_direct(block_t *ptr, struct inode *inode, int create, struct buffe
       set_buffer_new(bh);
     }
   }
+
+  /* 
+   * at this point, *ptr is non-zero
+   * assign a disk mapping associated with the file system and block number
+   */
+  map_bh(bh, inode->i_sb, *ptr);
+  return 0;
 }
 
 /**
  * indirect block retrieval oh boy
+ *
  */
-void retrieve_indirect(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh) {
+int retrieve_indirect(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh, sector_t block) {
+  // initialize block to be mapped to outgoing bh
+  int data_LBA;
+
  start:
+  //case when indirect block is not allocated: allocate indirect block and data block
   if (!*ptr) {
     int indirect_LBA; /* number of our new indirect block */
     
@@ -143,8 +154,98 @@ void retrieve_indirect(block_t *ptr, struct inode *inode, int create, struct buf
     /* not possible? must have run out of space! */
     if (!indirect_LBA) return -ENOSPC;
 
-    //TODO: things to think about: buffer lock, when to modify the block ptr
+    //TODO: do we need to mark this as dirty? do something?
+    data_LBA = wufs_new_block(inode); /* the direct block to be hung off the indirect block */
+
+    /* not possible? must have run out of space! */
+    if (!data_LBA) return -ENOSPC;
+
+    /* get a buffer head associated with the indirect block. Worry: int?  */
+    struct buffer_head *indir_ptr = sb_getblk(inode->i_sb, indirect_LBA); 
+    set_buffer_new(indir_ptr);
+    map_bh(indir_ptr, inode->i_sb, indirect_LBA); //from Duane's notes
+ 
+    block_t *blk_data = (block_t *)indir_ptr->b_data; //????
+    //Worry: what if block is too large? is l61 test enough?
+    blk_data += block;
+ 
+    //Worry: buffer rollback needed? 
+    lock_buffer(indir_ptr); //ENTERING CRITIZAL ZECTION
+    *blk_data = data_LBA;
+    unlock_buffer(indir_ptr); //EXITING...whew
+
+    //Time to write to ptr
+    write_lock(&pointers_lock);
+    if (*ptr) {
+      /* some other thread has set this! yikes: back out */
+      write_unlock(&pointers_lock);
+      /* need to forget that bh we allocated */
+      bforget(indir_ptr);
+      /* return blocks to the pool */
+      wufs_free_block(inode,indirect_LBA);
+      wufs_free_block(inode,data_LBA);
+      goto start; /* above */
+    } else {
+      /* we're good to modify the block pointer */
+      *ptr = indirect_LBA;
+      /* done with critical path */
+      write_unlock(&pointers_lock);
+      
+
+      /* update time and flush changes to disk */
+      inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
+      mark_inode_dirty(inode);
+      
+      //we mark the indir_ptr bh as dirty
+      mark_buffer_dirty_inode(indir_ptr, inode);
+      brelse(indir_ptr);
+
+      /*
+       * tell the buffer system this a new, valid block
+       * (see <linux/include/linux/buffer_head.h>)
+       */
+      set_buffer_new(bh);
+    }
+  // *ptr exists, as does the indirection block
+  } else {
+  
+    struct buffer_head *indir_ptr = sb_bread(inode->i_sb, *ptr);     
+    block_t *blk_data = (block_t *)indir_ptr->b_data;
+
+  start_indirection:  
+    blk_data += block;
+
+    // create new datablock, mark indirection block as dirty          
+    if (!*blk_data) {
+      data_LBA = wufs_new_block(inode);
+      if (!data_LBA) return -ENOSPC;
+    
+      lock_buffer(indir_ptr);
+      // time to write to the indirection block
+      if (*blk_data) {
+	// some other thread has set this! Yikes! back out
+	unlock_buffer(indir_ptr);
+	bforget(indir_ptr);
+	wufs_free_block(inode, data_LBA);
+	goto start_indirection;
+      
+      } else {
+	// we're good to insert the new data block pointer into the indirection block
+	*blk_data = data_LBA;
+	unlock_buffer(indir_ptr);
+	// mark the indirection bh as dirty
+	mark_buffer_dirty_inode(indir_ptr, inode);
+	// release indirection bufferhead
+	brelse(indir_ptr);
+      } 
+    // retrieve existing datablock (the nicest case = just retrieve indirect lba)
+    } else {
+      data_LBA = *blk_data;
+    }
   }
+  // map data lba to outgoing bh
+  map_bh(bh, inode->i_sb, data_LBA); 
+  return 0;
 }
 /**
  * wufs_truncate: (module-wide utility function)
