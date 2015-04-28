@@ -186,7 +186,7 @@ int retrieve_indirect(block_t *ptr, struct inode *inode, int create, struct buff
       wufs_free_block(inode,data_LBA);
       goto start; /* above */
     } else {
-      /* we're good to modify the block pointer */
+      /* we're good to modify  the block pointer */
       *ptr = indirect_LBA;
       /* done with critical path */
       write_unlock(&pointers_lock);
