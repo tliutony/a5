@@ -78,7 +78,6 @@ int wufs_get_blk(struct inode * inode, sector_t block, struct buffer_head *bh, i
     return retrieve_direct(ptr, inode, create, bh);
   }
 
-
   return 0;
 }
 
@@ -135,7 +134,6 @@ int retrieve_direct(block_t *ptr, struct inode *inode, int create, struct buffer
 
 /**
  * indirect block retrieval oh boy
- *
  */
 int retrieve_indirect(block_t *ptr, struct inode *inode, int create, struct buffer_head *bh, sector_t block) {
   // initialize block to be mapped to outgoing bh
@@ -262,16 +260,76 @@ void wufs_truncate(struct inode *inode)
 
   write_lock(&pointers_lock);
   /* compute the number of blocks needed by this file */
-  bcnt = (inode->i_size + WUFS_BLOCKSIZE -1) / WUFS_BLOCKSIZE;
 
-  /* set all blocks referenced beyond file size to 0 (null) */
-  for (i = bcnt; i < WUFS_INODE_BPTRS; i++) {
-    if (blk[i]) {
-      wufs_free_block(inode,blk[i]);
+  bcnt = (inode->i_size + WUFS_BLOCKSIZE -1) / WUFS_BLOCKSIZE;
+  
+  /*
+  int indirect_LBA = blk[WUFS_INODE_BPTRS-1];
+  if(indirect_LBA) {
+
+    if(bcnt < WUFS_INODE_BPTRS) {
+      
+      //set all blocks referenced beyond file size to 0 (null)
+      for (i = bcnt; i < WUFS_INODE_BPTRS-1; i++) {
+	if (blk[i]) {
+	  wufs_free_block(inode,blk[i]);
+	}
+	blk[i] = 0;
+      }
+      
+  } 
+  */ 
+
+  //BEGINNING of old code
+  if(bcnt < WUFS_INODE_BPTRS) {
+
+    /* set all blocks referenced beyond file size to 0 (null) */
+    for (i = bcnt; i < WUFS_INODE_BPTRS-1; i++) {
+      if (blk[i]) {
+	wufs_free_block(inode,blk[i]);
+      }
+      blk[i] = 0;
     }
-    blk[i] = 0;
+    // wipe out indirection if necessary 
+    int indirect_LBA = blk[WUFS_INODE_BPTRS-1];
+    if(indirect_LBA){ //grab indirect LBA
+      struct buffer_head *indir_ptr = sb_bread(inode->i_sb, indirect_LBA); 
+      block_t *blk_data = (block_t *)indir_ptr->b_data;
+      
+      for (i = 0; i < WUFS_BLOCKSIZE / 2; i++) { //LBAS are 2 bytes
+	if(blk_data[i]) {
+	  wufs_free_block(inode,blk_data[i]);
+	}
+	blk_data[i] = 0;
+      }
+      
+      //free the indirect ptr block itself
+      wufs_free_block(inode, indirect_LBA);
+      //this in mem version of the indirect block needs to be written to disk
+      mark_buffer_dirty_inode(indir_ptr, inode);
+      brelse(indir_ptr);
+      
+    }
+  } else {
+    //we have to enter our indirect blocks
+    bcnt -= WUFS_INODE_BPTRS-1; 
+    int indirect_LBA = blk[WUFS_INODE_BPTRS-1]; //grab indirect LBA
+    struct buffer_head *indir_ptr = sb_bread(inode->i_sb, indirect_LBA); 
+    block_t *blk_data = (block_t *)indir_ptr->b_data;
+    for (i = bcnt; i < WUFS_BLOCKSIZE / 2; i++) { //LBAS are 2 bytes
+      if(blk_data[i]) {
+	wufs_free_block(inode,blk_data[i]);
+      }
+      blk_data[i] = 0;
+    }
+
+    //this in mem version of the indirect block needs to be written to disk
+    mark_buffer_dirty_inode(indir_ptr, inode);
+    bforget(indir_ptr);
+    //brelse(indir_ptr);
   }
   write_unlock(&pointers_lock);
+
 
   /* My what a big change we made!  Timestamp and flush it to disk. */
   inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
