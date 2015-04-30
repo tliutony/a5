@@ -263,23 +263,6 @@ void wufs_truncate(struct inode *inode)
 
   bcnt = (inode->i_size + WUFS_BLOCKSIZE -1) / WUFS_BLOCKSIZE;
   
-  /*
-  int indirect_LBA = blk[WUFS_INODE_BPTRS-1];
-  if(indirect_LBA) {
-
-    if(bcnt < WUFS_INODE_BPTRS) {
-      
-      //set all blocks referenced beyond file size to 0 (null)
-      for (i = bcnt; i < WUFS_INODE_BPTRS-1; i++) {
-	if (blk[i]) {
-	  wufs_free_block(inode,blk[i]);
-	}
-	blk[i] = 0;
-      }
-      
-  } 
-  */ 
-
   //BEGINNING of old code
   if(bcnt < WUFS_INODE_BPTRS) {
 
@@ -304,11 +287,9 @@ void wufs_truncate(struct inode *inode)
       }
       
       //free the indirect ptr block itself
+      blk[WUFS_INODE_BPTRS-1] = 0;
+      bforget(indir_ptr); //TODO: which one to use?
       wufs_free_block(inode, indirect_LBA);
-      //this in mem version of the indirect block needs to be written to disk
-      mark_buffer_dirty_inode(indir_ptr, inode);
-      brelse(indir_ptr);
-      
     }
   } else {
     //we have to enter our indirect blocks
@@ -325,15 +306,18 @@ void wufs_truncate(struct inode *inode)
 
     //this in mem version of the indirect block needs to be written to disk
     mark_buffer_dirty_inode(indir_ptr, inode);
-    bforget(indir_ptr);
-    //brelse(indir_ptr);
+    brelse(indir_ptr);
   }
   write_unlock(&pointers_lock);
-
 
   /* My what a big change we made!  Timestamp and flush it to disk. */
   inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
   mark_inode_dirty(inode);
+
+  for (i = bcnt; i < WUFS_INODE_BPTRS; i++) { //LBAS are 2 bytes
+    if(blk[i]) 
+      printk("%d\n", i);
+  }
 }
 
 /**
