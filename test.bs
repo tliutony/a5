@@ -1,0 +1,52 @@
+#!/usr/bin/bash
+
+echo creating 10k file - 12k should be used
+dd if=/usr/share/dict/cracklib-small of=a bs=1k count=10
+df -h | tail -1
+echo
+
+echo creating 4k file - 16k
+dd if=/usr/share/dict/cracklib-small of=b bs=1k count=4
+df -h | tail -1
+echo
+
+echo replacing first file - 10k
+cat b > a
+df -h | tail -1
+echo
+
+echo removing first file - 6k
+rm a
+df -h | tail -1
+echo
+
+echo more cat-ing
+dd if=/usr/share/dict/cracklib-small of=a bs=1k count=10
+dd if=/usr/share/dict/cracklib-small of=c bs=1k count=20
+echo 36k
+df -h | tail -1
+echo
+cat c > a
+echo 26k
+df -h | tail -1
+echo
+rm a
+rm b
+rm c
+echo 2k
+df -h | tail -1
+echo
+
+echo actual truncating? 4k
+dd if=/usr/share/dict/cracklib-small of=a bs=1k count=30
+truncate -s 2K a
+df -h | tail -1
+echo
+
+echo 14k
+dd if=/usr/share/dict/cracklib-small of=a bs=1k count=30
+truncate -s 12K a
+df -h | tail -1
+echo
+
+rm a
