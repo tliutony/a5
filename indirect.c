@@ -248,19 +248,12 @@ void wufs_truncate(struct inode *inode)
   int i;
   long bcnt = 0;
 
-  for (i = bcnt; i < WUFS_INODE_BPTRS; i++) { //LBAS are 2 bytes
-    if(blk[i]) 
-      debugPrint("Active block %d\n", i);
-  }
-
   block_truncate_page(inode->i_mapping, inode->i_size, wufs_get_blk);
 
   write_lock(&pointers_lock);
   /* compute the number of blocks needed by this file */
-
   bcnt = (inode->i_size + WUFS_BLOCKSIZE - 1) / WUFS_BLOCKSIZE;
-  
-  //BEGINNING of old code
+
   if(bcnt < WUFS_INODE_BPTRS) {
     int indirect_LBA;
     struct buffer_head *indir_ptr;
@@ -273,6 +266,7 @@ void wufs_truncate(struct inode *inode)
       }
       blk[i] = 0;
     }
+    write_unlock(&pointers_lock);
     
     // wipe out indirection if necessary 
     indirect_LBA = blk[WUFS_INODE_BPTRS-1];
@@ -290,42 +284,46 @@ void wufs_truncate(struct inode *inode)
 	  debugPrint("Removing indirect block %d\n", i);
 	  wufs_free_block(inode,blk_data[i]);
 	}
-	blk_data[i] = 0;
+	blk_data[i] = 0; //because we're polite?
       }
       
       //free the indirect ptr block itself
+      //in and out fast
+      write_lock(&pointers_lock);
       debugPrint("Removing lvl 1 indirection block\n");
       blk[WUFS_INODE_BPTRS-1] = 0;
+      write_unlock(&pointers_lock);
+
       wufs_free_block(inode, indirect_LBA);
       bforget(indir_ptr); 
     }
-
   } 
 
   else {
+    write_unlock(&pointers_lock);
     //we have to enter our indirect blocks
-    bcnt -= WUFS_INODE_BPTRS; //should this be -1? 
+    bcnt -= (WUFS_INODE_BPTRS-1); //-1 for correct semantics (bcnt is logical size)
+
     int indirect_LBA = blk[WUFS_INODE_BPTRS-1]; //grab indirect LBA
     struct buffer_head *indir_ptr = sb_bread(inode->i_sb, indirect_LBA); 
     block_t *blk_data = (block_t *)indir_ptr->b_data;
+    lock_buffer(indir_ptr);
     for (i = bcnt; i < WUFS_BLOCKSIZE / 2; i++) { //LBAS are 2 bytes
       if(blk_data[i]) {
 	wufs_free_block(inode,blk_data[i]);
       }
       blk_data[i] = 0;
     }
+    unlock_buffer(indir_ptr);
 
     //this in mem version of the indirect block needs to be written to disk
     mark_buffer_dirty_inode(indir_ptr, inode);
     brelse(indir_ptr);
   }
-  write_unlock(&pointers_lock);
 
   /* My what a big change we made!  Timestamp and flush it to disk. */
   inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
-  mark_inode_dirty(inode);
-
-  
+  mark_inode_dirty(inode);  
 }
 
 /**
